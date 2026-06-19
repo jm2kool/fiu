@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>FIU — Capacity Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- ============================================================
+     FIREBASE SDK (compat build, loaded from cdnjs)
+     ============================================================ -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.7.1/firebase-app-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.7.1/firebase-firestore-compat.min.js"></script>
+
+<style>
+  :root{
+    --bg-deep: #2A0810;
+    --bg-card: #3B1019;
+    --bg-card-solid: #3B1019;
+    --bg-raised: #4A1521;
+    --gold: #C9A227;
+    --gold-bright: #E3B94A;
+    --cream: #F3E9D7;
+    --cream-dim: #C9B9A4;
+    --hairline: rgba(243,233,215,0.12);
+    --green: #4F9D69;
+    --amber: #E0A92B;
+    --red: #E5484D;
+    --shadow: 0 14px 34px rgba(0,0,0,0.45);
+  }
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:
+      radial-gradient(ellipse at top, rgba(201,162,39,0.07), transparent 55%),
+      var(--bg-deep);
+    color:var(--cream);
+    font-family:'Inter',system-ui,sans-serif;
+    overflow-x:hidden;
+  }
+
+  h1,h2,h3,.serif{ font-family:'Playfair Display',serif; }
+
+  /* ---------- Top bar ---------- */
+  .topbar{
+    position:sticky; top:0; z-index:20;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:22px 20px 16px;
+    background:linear-gradient(180deg, var(--bg-deep) 70%, transparent);
+  }
+  .topbar .eyebrow{
+    font-size:11px; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--gold-bright); font-weight:600; margin:0 0 2px;
+  }
+  .topbar h1{ margin:0; font-size:26px; font-weight:700; color:var(--cream); }
+
+  .add-btn{
+    width:46px; height:46px; border-radius:50%;
+    background:var(--gold); color:#2A0810; border:none;
+    font-size:26px; line-height:1; font-weight:700;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:var(--shadow); cursor:pointer; flex-shrink:0;
+    transition:transform .15s ease;
+  }
+  .add-btn:active{ transform:scale(0.92); }
+
+  /* ---------- Setup banner ---------- */
+  .setup-banner{
+    margin:0 20px 18px; padding:13px 16px; border-radius:12px;
+    background:rgba(224,169,43,0.14); border:1px solid rgba(224,169,43,0.4);
+    color:var(--gold-bright); font-size:13px; line-height:1.5;
+    display:none;
+  }
+  .setup-banner.show{ display:block; }
+  .setup-banner b{ color:var(--cream); }
+
+  /* ---------- Overview grid ---------- */
+  .grid{
+    display:grid; gap:16px; padding:4px 20px 100px;
+    grid-template-columns:repeat(auto-fill, minmax(160px,1fr));
+  }
+
+  .empty-state{
+    margin:60px 20px; text-align:center; color:var(--cream-dim);
+  }
+  .empty-state .serif{ font-size:20px; color:var(--cream); margin-bottom:6px; }
+
+  .card{
+    background:linear-gradient(160deg, var(--bg-card), var(--bg-raised));
+    border:1px solid var(--hairline);
+    border-radius:18px;
+    padding:16px 14px 14px;
+    cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; gap:10px;
+    text-align:center;
+    transition:transform .15s ease, border-color .15s ease;
+    position:relative;
+    overflow:hidden;
+  }
+  .card:active{ transform:scale(0.97); }
+  .card[data-status="red"]{ border-color:rgba(229,72,77,0.55); }
+  .card[data-status="amber"]{ border-color:rgba(224,169,43,0.45); }
+  .card .glow{
+    position:absolute; inset:0; pointer-events:none; opacity:.5;
+    background:radial-gradient(circle at 50% -10%, var(--glow-color,transparent), transparent 60%);
+  }
+
+  .card-eyebrow{
+    font-size:10px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--cream-dim); font-weight:600;
+  }
+  .card-title{
+    font-size:16px; font-weight:700; color:var(--cream);
+    line-height:1.25; min-height:40px; display:flex; align-items:center;
+  }
+
+  .donut{
+    position:relative; width:82px; height:82px; border-radius:50%;
+    background:conic-gradient(var(--c) calc(var(--p)*1%), rgba(243,233,215,0.10) 0);
+  }
+  .donut-inner{
+    position:absolute; inset:9px; border-radius:50%;
+    background:var(--bg-card-solid);
+    display:flex; align-items:center; justify-content:center;
+    flex-direction:column;
+  }
+  .donut-pct{ font-size:14px; font-weight:700; color:var(--cream); }
+  .donut-sub{ font-size:8px; color:var(--cream-dim); letter-spacing:.05em; }
+
+  .card-counts{ font-size:12px; color:var(--cream-dim); }
+  .card-counts b{ color:var(--cream); font-weight:600; }
+
+  /* ---------- Detail screen ---------- */
+  .detail{
+    position:fixed; inset:0; z-index:50;
+    background:radial-gradient(ellipse at top, rgba(201,162,39,0.08), transparent 55%), var(--bg-deep);
+    display:flex; flex-direction:column;
+    transform:translateY(100%);
+    transition:transform .28s cubic-bezier(.4,0,.2,1);
+  }
+  .detail.show{ transform:translateY(0); }
+
+  .detail-top{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:20px;
+  }
+  .icon-btn{
+    width:40px; height:40px; border-radius:50%; border:1px solid var(--hairline);
+    background:rgba(243,233,215,0.04); color:var(--cream);
+    display:flex; align-items:center; justify-content:center;
+    font-size:18px; cursor:pointer;
+  }
+  .icon-btn:active{ background:rgba(243,233,215,0.1); }
+
+  .detail-body{
+    flex:1; display:flex; flex-direction:column; align-items:center;
+    padding:10px 24px 30px; overflow-y:auto;
+  }
+  .detail-eyebrow{
+    font-size:11px; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--gold-bright); font-weight:600; margin-bottom:8px;
+  }
+  .detail-title{
+    font-size:26px; font-weight:700; text-align:center; margin:0 0 26px;
+    line-height:1.25;
+  }
+
+  .big-donut{
+    position:relative; width:230px; height:230px; border-radius:50%;
+    background:conic-gradient(var(--c) calc(var(--p)*1%), rgba(243,233,215,0.10) 0);
+    margin-bottom:30px;
+    flex-shrink:0;
+  }
+  .big-donut-inner{
+    position:absolute; inset:20px; border-radius:50%;
+    background:var(--bg-deep);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+  }
+  .big-count{ font-size:48px; font-weight:800; font-family:'Playfair Display',serif; line-height:1; }
+  .big-max{ font-size:14px; color:var(--cream-dim); margin-top:4px; }
+  .status-pill{
+    margin-top:10px; font-size:11px; font-weight:700; letter-spacing:.06em;
+    text-transform:uppercase; padding:4px 12px; border-radius:20px;
+  }
+
+  .counter-row{ display:flex; align-items:center; gap:18px; margin-bottom:18px; }
+  .counter-btn{
+    width:64px; height:64px; border-radius:50%; border:none;
+    background:var(--bg-raised); color:var(--cream);
+    font-size:30px; font-weight:600; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:var(--shadow);
+    border:1px solid var(--hairline);
+  }
+  .counter-btn:active{ transform:scale(0.93); }
+  .counter-btn.plus{ background:var(--gold); color:#2A0810; border:none; }
+
+  .quick-row{ display:flex; gap:10px; margin-bottom:30px; }
+  .quick-btn{
+    padding:8px 16px; border-radius:20px; border:1px solid var(--hairline);
+    background:rgba(243,233,215,0.04); color:var(--cream-dim);
+    font-size:13px; cursor:pointer; font-weight:600;
+  }
+  .quick-btn:active{ background:rgba(243,233,215,0.1); }
+
+  .edit-link{
+    font-size:13px; color:var(--cream-dim); text-decoration:underline;
+    cursor:pointer; margin-top:auto;
+  }
+
+  /* ---------- Modal ---------- */
+  .overlay{
+    position:fixed; inset:0; z-index:80;
+    background:rgba(10,2,4,0.7);
+    display:none; align-items:flex-end; justify-content:center;
+  }
+  .overlay.show{ display:flex; }
+  .sheet{
+    width:100%; max-width:480px;
+    background:var(--bg-card); border-radius:24px 24px 0 0;
+    padding:26px 22px 30px;
+    border:1px solid var(--hairline); border-bottom:none;
+  }
+  .sheet h2{ margin:0 0 18px; font-size:21px; }
+  .field-label{
+    font-size:11px; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--cream-dim); font-weight:600; margin:16px 0 7px;
+  }
+  .field-label:first-of-type{ margin-top:0; }
+  input[type="text"], input[type="number"]{
+    width:100%; padding:13px 14px; border-radius:11px;
+    border:1px solid var(--hairline); background:var(--bg-deep);
+    color:var(--cream); font-size:15px; font-family:'Inter',sans-serif;
+    outline:none;
+  }
+  input::placeholder{ color:rgba(243,233,215,0.35); }
+  .type-toggle{ display:flex; gap:10px; }
+  .type-opt{
+    flex:1; padding:13px; text-align:center; border-radius:11px;
+    border:1px solid var(--hairline); background:var(--bg-deep);
+    color:var(--cream-dim); font-weight:600; font-size:14px; cursor:pointer;
+  }
+  .type-opt.active{ border-color:var(--gold); color:var(--gold-bright); background:rgba(201,162,39,0.1); }
+  .sheet-actions{ display:flex; gap:10px; margin-top:26px; }
+  .btn{
+    flex:1; padding:14px; border-radius:12px; border:none;
+    font-weight:700; font-size:15px; cursor:pointer;
+  }
+  .btn-primary{ background:var(--gold); color:#2A0810; }
+  .btn-ghost{ background:transparent; color:var(--cream-dim); border:1px solid var(--hairline); }
+  .btn-danger{ background:rgba(229,72,77,0.15); color:var(--red); border:1px solid rgba(229,72,77,0.4); }
+
+  @media (min-width:640px){
+    .grid{ grid-template-columns:repeat(auto-fill, minmax(190px,1fr)); }
+  }
+</style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div>
+      <p class="eyebrow">FIU Summit</p>
+      <h1>Capacity Tracker</h1>
+    </div>
+    <button class="add-btn" id="openAdd" aria-label="Add workshop or competition">+</button>
+  </div>
+
+  <div class="setup-banner" id="setupBanner">
+    ⚠️ <b>Running in local demo mode.</b> Changes here only live on this device and reset on refresh.
+    To turn on live sync for everyone, paste your Firebase config into the script
+    block marked <b>FIREBASE CONFIG</b> near the top of this file.
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="empty-state" id="emptyState" style="display:none;">
+    <p class="serif">Nothing tracked yet</p>
+    <p>Tap the gold + button to add your first workshop or competition.</p>
+  </div>
+
+  <!-- Detail full-screen view -->
+  <div class="detail" id="detail">
+    <div class="detail-top">
+      <button class="icon-btn" id="closeDetail">&#8592;</button>
+      <button class="icon-btn" id="openEdit">&#8943;</button>
+    </div>
+    <div class="detail-body">
+      <p class="detail-eyebrow" id="detailEyebrow">Workshop</p>
+      <h2 class="detail-title" id="detailTitle">Title</h2>
+
+      <div class="big-donut" id="bigDonut">
+        <div class="big-donut-inner">
+          <div class="big-count" id="bigCount">0</div>
+          <div class="big-max" id="bigMax">of 0 spots</div>
+          <div class="status-pill" id="statusPill">Open</div>
+        </div>
+      </div>
+
+      <div class="counter-row">
+        <button class="counter-btn" id="minus1">&minus;</button>
+        <button class="counter-btn plus" id="plus1">+</button>
+      </div>
+      <div class="quick-row">
+        <button class="quick-btn" id="minus5">&minus;5</button>
+        <button class="quick-btn" id="plus5">+5</button>
+      </div>
+
+      <div class="edit-link" id="openEditLink">Edit details</div>
+    </div>
+  </div>
+
+  <!-- Add / Edit sheet -->
+  <div class="overlay" id="formOverlay">
+    <div class="sheet">
+      <h2 id="sheetTitle">New entry</h2>
+
+      <div class="field-label">Type</div>
+      <div class="type-toggle">
+        <div class="type-opt active" data-type="workshop">Workshop</div>
+        <div class="type-opt" data-type="competition">Competition</div>
+      </div>
+
+      <div class="field-label">Title</div>
+      <input type="text" id="inputTitle" placeholder="e.g. Intro to Machine Learning">
+
+      <div class="field-label">Maximum capacity</div>
+      <input type="number" id="inputMax" placeholder="e.g. 40" min="1">
+
+      <div class="sheet-actions">
+        <button class="btn btn-ghost" id="cancelForm">Cancel</button>
+        <button class="btn btn-primary" id="saveForm">Save</button>
+      </div>
+      <div class="sheet-actions" id="deleteRow" style="display:none;">
+        <button class="btn btn-danger" id="deleteEntry">Delete this entry</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ===================================================================
+   FIREBASE CONFIG
+   -------------------------------------------------------------------
+   Replace the object below with the config from your Firebase
+   project (Project settings → General → Your apps → SDK setup
+   and configuration → Config). Once a real apiKey is in place,
+   the app automatically switches from local demo mode to live
+   Firestore sync — no other code changes needed.
+   =================================================================== */
+const firebaseConfig = {
+  apiKey: "AIzaSyDL5PIsW6CZmydrWG2h5qdZdgJUqUpjlO4",
+  authDomain: "compworkshoptracker.firebaseapp.com",
+  projectId: "compworkshoptracker",
+  storageBucket: "compworkshoptracker.firebasestorage.app",
+  messagingSenderId: "536003687433",
+  appId: "1:536003687433:web:15d99728007971e52bb4d8"
+};
+const COLLECTION_NAME = "capacityTracker";
+/* =================================================================== */
+
+const isFirebaseConfigured = firebaseConfig.apiKey !== "YOUR_API_KEY_HERE";
+let db = null;
+let items = []; // local state, mirrored from Firestore or used standalone
+
+if (isFirebaseConfigured) {
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.firestore();
+} else {
+  document.getElementById('setupBanner').classList.add('show');
+  // seed a couple of demo entries so the UI isn't empty on first look
+  items = [
+    { id: 'demo1', title: 'Intro to Machine Learning', type: 'workshop', maxCapacity: 40, filled: 38 },
+    { id: 'demo2', title: 'Mock Trial Finals', type: 'competition', maxCapacity: 24, filled: 12 },
+    { id: 'demo3', title: 'Robotics Build Lab', type: 'workshop', maxCapacity: 30, filled: 9 }
+  ];
+}
+
+/* ---------- status / color helpers ---------- */
+function statusFor(filled, max){
+  const pct = max > 0 ? (filled / max) * 100 : 0;
+  if (pct >= 100) return 'red';
+  if (pct > 50) return 'amber';
+  return 'green';
+}
+const statusColor = { green: 'var(--green)', amber: 'var(--amber)', red: 'var(--red)' };
+const statusLabel = { green: 'Open', amber: 'Filling up', red: 'Full' };
+
+/* ---------- render overview grid ---------- */
+const grid = document.getElementById('grid');
+const emptyState = document.getElementById('emptyState');
+
+function render(){
+  grid.innerHTML = '';
+  emptyState.style.display = items.length === 0 ? 'block' : 'none';
+
+  items.forEach(item => {
+    const pct = item.maxCapacity > 0 ? Math.min(100, Math.round((item.filled / item.maxCapacity) * 100)) : 0;
+    const status = statusFor(item.filled, item.maxCapacity);
+    const spotsLeft = Math.max(0, item.maxCapacity - item.filled);
+
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.status = status;
+    card.innerHTML = `
+      <div class="glow" style="--glow-color:${statusColor[status]}"></div>
+      <div class="card-eyebrow">${item.type === 'competition' ? 'Competition' : 'Workshop'}</div>
+      <div class="card-title">${escapeHtml(item.title)}</div>
+      <div class="donut" style="--p:${pct}; --c:${statusColor[status]}">
+        <div class="donut-inner">
+          <div class="donut-pct">${pct}%</div>
+          <div class="donut-sub">FILLED</div>
+        </div>
+      </div>
+      <div class="card-counts"><b>${item.filled}</b> / ${item.maxCapacity} &nbsp;·&nbsp; ${spotsLeft} left</div>
+    `;
+    card.addEventListener('click', () => openDetail(item.id));
+    grid.appendChild(card);
+  });
+}
+
+function escapeHtml(str){
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+/* ---------- Firestore sync (live mode only) ---------- */
+if (isFirebaseConfigured) {
+  db.collection(COLLECTION_NAME).orderBy('createdAt', 'asc').onSnapshot(snapshot => {
+    items = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    render();
+    if (currentDetailId) refreshDetailIfOpen();
+  }, err => {
+    console.error('Firestore sync error:', err);
+  });
+} else {
+  render();
+}
+
+/* ---------- add new entry ---------- */
+const formOverlay = document.getElementById('formOverlay');
+const sheetTitle = document.getElementById('sheetTitle');
+const inputTitle = document.getElementById('inputTitle');
+const inputMax = document.getElementById('inputMax');
+const typeOpts = document.querySelectorAll('.type-opt');
+const deleteRow = document.getElementById('deleteRow');
+let selectedType = 'workshop';
+let editingId = null; // null = creating new
+
+typeOpts.forEach(opt => {
+  opt.addEventListener('click', () => {
+    typeOpts.forEach(o => o.classList.remove('active'));
+    opt.classList.add('active');
+    selectedType = opt.dataset.type;
+  });
+});
+
+document.getElementById('openAdd').addEventListener('click', () => {
+  editingId = null;
+  sheetTitle.textContent = 'New entry';
+  inputTitle.value = '';
+  inputMax.value = '';
+  selectedType = 'workshop';
+  typeOpts.forEach(o => o.classList.toggle('active', o.dataset.type === 'workshop'));
+  deleteRow.style.display = 'none';
+  formOverlay.classList.add('show');
+});
+
+document.getElementById('cancelForm').addEventListener('click', () => {
+  formOverlay.classList.remove('show');
+});
+
+document.getElementById('saveForm').addEventListener('click', async () => {
+  const title = inputTitle.value.trim();
+  const max = parseInt(inputMax.value, 10);
+  if (!title || !max || max < 1) {
+    alert('Please add a title and a maximum capacity of at least 1.');
+    return;
+  }
+
+  if (editingId) {
+    // editing existing entry's title/type/max
+    if (isFirebaseConfigured) {
+      const ref = db.collection(COLLECTION_NAME).doc(editingId);
+      await db.runTransaction(async (t) => {
+        const doc = await t.get(ref);
+        const data = doc.data();
+        const clampedFilled = Math.min(data.filled, max);
+        t.update(ref, { title, type: selectedType, maxCapacity: max, filled: clampedFilled });
+      });
+    } else {
+      const item = items.find(i => i.id === editingId);
+      item.title = title; item.type = selectedType; item.maxCapacity = max;
+      item.filled = Math.min(item.filled, max);
+      render();
+    }
+  } else {
+    // creating new entry
+    if (isFirebaseConfigured) {
+      await db.collection(COLLECTION_NAME).add({
+        title, type: selectedType, maxCapacity: max, filled: 0,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    } else {
+      items.push({ id: 'local-' + Date.now(), title, type: selectedType, maxCapacity: max, filled: 0 });
+      render();
+    }
+  }
+  formOverlay.classList.remove('show');
+});
+
+/* ---------- detail view ---------- */
+const detail = document.getElementById('detail');
+let currentDetailId = null;
+
+function openDetail(id){
+  currentDetailId = id;
+  refreshDetailIfOpen();
+  detail.classList.add('show');
+}
+
+function refreshDetailIfOpen(){
+  const item = items.find(i => i.id === currentDetailId);
+  if (!item) { detail.classList.remove('show'); return; }
+  const pct = item.maxCapacity > 0 ? Math.min(100, Math.round((item.filled / item.maxCapacity) * 100)) : 0;
+  const status = statusFor(item.filled, item.maxCapacity);
+
+  document.getElementById('detailEyebrow').textContent = item.type === 'competition' ? 'Competition' : 'Workshop';
+  document.getElementById('detailTitle').textContent = item.title;
+  document.getElementById('bigDonut').style.setProperty('--p', pct);
+  document.getElementById('bigDonut').style.setProperty('--c', statusColor[status]);
+  document.getElementById('bigCount').textContent = item.filled;
+  document.getElementById('bigMax').textContent = `of ${item.maxCapacity} spots`;
+  const pill = document.getElementById('statusPill');
+  pill.textContent = statusLabel[status];
+  pill.style.background = `color-mix(in srgb, ${statusColor[status]} 22%, transparent)`;
+  pill.style.color = statusColor[status];
+}
+
+document.getElementById('closeDetail').addEventListener('click', () => {
+  detail.classList.remove('show');
+  currentDetailId = null;
+});
+
+async function changeCount(delta){
+  const item = items.find(i => i.id === currentDetailId);
+  if (!item) return;
+
+  if (isFirebaseConfigured) {
+    const ref = db.collection(COLLECTION_NAME).doc(currentDetailId);
+    try {
+      await db.runTransaction(async (t) => {
+        const doc = await t.get(ref);
+        const data = doc.data();
+        let newFilled = (data.filled || 0) + delta;
+        newFilled = Math.max(0, Math.min(data.maxCapacity, newFilled));
+        t.update(ref, { filled: newFilled });
+      });
+    } catch (e) {
+      console.error('Update failed:', e);
+    }
+  } else {
+    item.filled = Math.max(0, Math.min(item.maxCapacity, item.filled + delta));
+    render();
+    refreshDetailIfOpen();
+  }
+}
+
+document.getElementById('plus1').addEventListener('click', () => changeCount(1));
+document.getElementById('minus1').addEventListener('click', () => changeCount(-1));
+document.getElementById('plus5').addEventListener('click', () => changeCount(5));
+document.getElementById('minus5').addEventListener('click', () => changeCount(-5));
+
+/* ---------- edit / delete from detail screen ---------- */
+function openEditFor(id){
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  editingId = id;
+  sheetTitle.textContent = 'Edit entry';
+  inputTitle.value = item.title;
+  inputMax.value = item.maxCapacity;
+  selectedType = item.type;
+  typeOpts.forEach(o => o.classList.toggle('active', o.dataset.type === item.type));
+  deleteRow.style.display = 'flex';
+  formOverlay.classList.add('show');
+}
+
+document.getElementById('openEdit').addEventListener('click', () => openEditFor(currentDetailId));
+document.getElementById('openEditLink').addEventListener('click', () => openEditFor(currentDetailId));
+
+document.getElementById('deleteEntry').addEventListener('click', async () => {
+  if (!editingId) return;
+  if (!confirm('Delete this entry? This cannot be undone.')) return;
+
+  if (isFirebaseConfigured) {
+    await db.collection(COLLECTION_NAME).doc(editingId).delete();
+  } else {
+    items = items.filter(i => i.id !== editingId);
+    render();
+  }
+  formOverlay.classList.remove('show');
+  detail.classList.remove('show');
+  currentDetailId = null;
+});
+</script>
+</body>
+</html>
